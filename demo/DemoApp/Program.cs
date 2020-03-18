@@ -1,63 +1,83 @@
 ﻿// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
 using RulesEngine.Models;
 using System;
 using System.Collections.Generic;
-using System.Dynamic;
-using System.IO;
-using static RulesEngine.Extensions.ListofRuleResultTreeExtension;
+using System.Linq;
 
 namespace DemoApp
 {
-    class Program
+    class Shipment
     {
-        static void Main(string[] args)
+        public string Origin { get; set; }
+        public string Destination { get; set; }
+        public decimal Amount { get; set; }
+        public string Currency { get; set; }
+    }
+
+    internal static class Program
+    {
+        public static void Main(string[] args)
         {
-            var basicInfo = "{\"name\": \"Dishant\",\"email\": \"dishantmunjal@live.com\",\"creditHistory\": \"good\",\"country\": \"canada\",\"loyalityFactor\": 3,\"totalPurchasesToDate\": 10000}";
-            var orderInfo = "{\"totalOrders\": 5,\"recurringItems\": 2}";
-            var telemetryInfo = "{\"noOfVisitsPerMonth\": 10,\"percentageOfBuyingToVisit\": 15}";
+            #region And Or Logic
+            // Child Rules could imply a AND clause whereas sibling rules could be and OR operator
+            // If a parent rule is false then the rule doesn't apply however you can keep
+            // going down the tree and if a leaf node and it's siblings are true you should have
+            // a valid result. 
+            //
+            // Example:
+            // 
+            // Below are two rules each with child rules
+            // the first top level rule ends up being false.
+            // the last top level rule ends up being true.
 
-            var converter = new ExpandoObjectConverter();
+            // |- True (Not same as origin)
+            //      - True  (Over 200)
+            //          - True  (In GBP)
+            //              - False (To France)
+            // |- True (Not same as origin)
+            //      - True (Over 200)
+            //          - True (In GBP)
+            //              - True (To Spain)
+            #endregion
 
-            dynamic input1 = JsonConvert.DeserializeObject<ExpandoObject>(basicInfo, converter);
-            dynamic input2 = JsonConvert.DeserializeObject<ExpandoObject>(orderInfo, converter);
-            dynamic input3 = JsonConvert.DeserializeObject<ExpandoObject>(telemetryInfo, converter);
-
-            var inputs = new dynamic[]
+            var workflowRules = new List<WorkflowRules>()
+            {
+                new WorkflowRules()
                 {
-                    input1,
-                    input2,
-                    input3
-                };
+                    WorkflowName = "generate-cn22",
+                    Rules = new List<Rule>()
+                    {
+                        new Rule()
+                        {
+                            RuleName = "From GB Under 100 Pounds",
+                            RuleExpressionType = RuleExpressionType.LambdaExpression,
+                            Expression = "Origin == \"GB\" && Amount > 100",
+                        },
+                        new Rule()
+                        {
+                            RuleName = "Destination is not the same as origin",
+                            RuleExpressionType = RuleExpressionType.LambdaExpression,
+                            Expression = "Origin != Destination",
+                        }
+                    }
+                }
+            };
 
-            var files = Directory.GetFiles(Directory.GetCurrentDirectory(), "Discount.json", SearchOption.AllDirectories);
-            if (files == null || files.Length == 0)
-                throw new Exception("Rules not found.");
-
-            var fileData = File.ReadAllText(files[0]);
-            var workflowRules = JsonConvert.DeserializeObject<List<WorkflowRules>>(fileData);
-
-            var bre = new RulesEngine.RulesEngine(workflowRules.ToArray(), null);
-
-            string discountOffered = "No discount offered.";
-
-            List<RuleResultTree> resultList = bre.ExecuteRule("Discount", inputs);
-
-            resultList.OnSuccess((eventName) =>
+            var shipment = new Shipment()
             {
-                discountOffered = $"Discount offered is {eventName} % over MRP.";
-            });
+                Origin = "GB",
+                Destination = "XY",
+                Amount = 200,
+                Currency = "GBP"
+            };
 
-            resultList.OnFail(() =>
-            {
-                discountOffered = "The user is not eligible for any discount.";
-            });
+            var engine = new RulesEngine.RulesEngine(workflowRules.ToArray(), null);
+            var resultList = engine.ExecuteRule("generate-cn22", shipment);
 
-            Console.WriteLine(discountOffered);
-
+            var passedRules = resultList.Count(x => x.IsSuccess);
+            Console.Write(passedRules);
         }
     }
 }
